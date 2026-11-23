@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Canlı Altyazı</title>
+<style>
+  :root { --ink:#111111; --paper:#FFFFFF; --mute:#D2D2D2; }
+  * { box-sizing:border-box; margin:0; }
+  html, body { height:100%; background:var(--ink); color:var(--paper);
+    font-family:-apple-system,"Helvetica Neue",Arial,sans-serif; }
+  body { display:flex; flex-direction:column; justify-content:flex-end; }
+  #sub { padding:2vh 5vw 5vh; font-size:clamp(28px,4.4vw,64px); line-height:1.25; font-weight:600;
+    text-align:center; min-height:30vh; display:flex; flex-direction:column; justify-content:flex-end; gap:.4em; }
+  #prev { color:var(--mute); font-weight:400; font-size:.7em; }
+  #start { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+    background:var(--paper); color:var(--ink); border:0; border-radius:999px;
+    padding:16px 36px; font-size:20px; cursor:pointer; }
+  #msg { position:fixed; top:12px; left:16px; font-size:13px; color:var(--mute); }
+</style>
+</head>
+<body>
+<div id="msg"></div>
+<button id="start">Başlat</button>
+<div id="sub"><div id="prev"></div><div id="cur"></div></div>
+<script>
+const $ = id => document.getElementById(id);
+const PREV = $("prev"), CUR = $("cur");
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let translator = null, rec = null, running = false;
+let lastSent = "", timer = null, reqId = 0;
+
+async function makeTranslator() {
+  try {
+    if ("Translator" in self) {
+      const a = await Translator.availability({ sourceLanguage:"en", targetLanguage:"tr" });
+      if (a !== "unavailable") return await Translator.create({ sourceLanguage:"en", targetLanguage:"tr" });
+    }
+  } catch (e) {}
+  return null;
+}
+async function translate(text) {
+  if (translator) return await translator.translate(text);
+  const r = await fetch("https://api.mymemory.translated.net/get?langpair=en|tr&q=" + encodeURIComponent(text));
+  const j = await r.json();
+  return j.responseData.translatedText;
+}
+async function show(text, final) {
+  const id = ++reqId;
+  try {
+    const tr = await translate(text);
+    if (id < reqId && !final) return;
+    CUR.textContent = tr;
+    if (final) { PREV.textContent = tr; CUR.textContent = ""; }
+  } catch (e) { $("msg").textContent = "Çeviri hatası"; }
+}
+function setup() {
+  rec = new SR();
+  rec.lang = "en-US"; rec.continuous = true; rec.interimResults = true;
+  rec.onresult = ev => {
+    let interim = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i], t = r[0].transcript.trim();
+      if (r.isFinal) { clearTimeout(timer); show(t, true); lastSent = ""; }
+      else interim += t + " ";
+    }
+    interim = interim.trim();
+    if (interim && interim !== lastSent) {
+      clearTimeout(timer);
+      timer = setTimeout(() => { lastSent = interim; show(interim, false); }, 500);
+    }
+  };
+  rec.onend = () => { if (running) try { rec.start(); } catch (e) {} };
+  rec.onerror = e => { $("msg").textContent = "Mikrofon: " + e.error; };
+}
+$("start").onclick = async () => {
+  if (!SR) { $("msg").textContent = "Bu tarayıcı konuşma tanımayı desteklemiyor. Chrome kullan."; return; }
+  $("start").style.display = "none";
+  if ("documentPictureInPicture" in window) {
+    try {
+      const w = await documentPictureInPicture.requestWindow({ width: 1100, height: 240 });
+      const st = document.createElement("style");
+      st.textContent = [...document.styleSheets].map(ss => [...ss.cssRules].map(r => r.cssText).join("\n")).join("\n");
+      w.document.head.append(st);
+      w.document.body.append($("sub"));
+    } catch (e) {}
+  }
+  translator = await makeTranslator();
+  $("msg").textContent = translator ? "Çeviri: cihazda" : "Çeviri: çevrimiçi";
+  setTimeout(() => $("msg").textContent = "", 3000);
+  setup(); running = true; rec.start();
+};
+</script>
+</body>
+</html>
